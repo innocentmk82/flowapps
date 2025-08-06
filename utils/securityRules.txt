@@ -1,0 +1,43 @@
+Firebase Firestore Security Rules for PayFlow:
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users can only read/write their own user document
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Merchants can read their own merchant document
+    match /merchants/{merchantId} {
+      allow read, write: if request.auth != null && request.auth.uid == merchantId;
+    }
+    
+    // Transactions can be read by participants, created by authenticated users
+    match /transactions/{transactionId} {
+      allow read: if request.auth != null && 
+        (request.auth.uid == resource.data.payerId || 
+         request.auth.uid == resource.data.receiverId);
+      allow create: if request.auth != null && 
+        request.auth.uid == request.resource.data.payerId;
+    }
+    
+    // Invoices can be read by merchant or referenced client
+    match /invoices/{invoiceId} {
+      allow read, write: if request.auth != null && 
+        request.auth.uid == resource.data.merchantId;
+      allow read: if request.auth != null;
+      allow update: if request.auth != null && 
+        (request.auth.uid == resource.data.merchantId || 
+         'status' in request.resource.data && 
+         request.resource.data.status == 'paid');
+    }
+    
+    // Products can be read by anyone, managed by merchant
+    match /products/{productId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && 
+        request.auth.uid == resource.data.merchantId;
+    }
+  }
+}

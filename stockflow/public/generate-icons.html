@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Icon Generator</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .icon-container { margin: 20px 0; }
+        canvas { border: 1px solid #ccc; margin: 10px; }
+        button { padding: 10px 20px; margin: 5px; background: #2563eb; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        button:hover { background: #1d4ed8; }
+    </style>
+</head>
+<body>
+    <h1>StockFlow Icon Generator</h1>
+    <p>Click the buttons below to generate PNG icons for the PWA:</p>
+    
+    <div class="icon-container">
+        <button onclick="generateIcon(192)">Generate 192x192 Icon</button>
+        <button onclick="generateIcon(512)">Generate 512x512 Icon</button>
+        <button onclick="downloadAll()">Download All Icons</button>
+    </div>
+    
+    <div id="canvases"></div>
+
+    <script>
+        function generateIcon(size) {
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            
+            // Create a temporary image to draw the SVG
+            const img = new Image();
+            img.onload = function() {
+                ctx.drawImage(img, 0, 0, size, size);
+                
+                // Add to page
+                const container = document.getElementById('canvases');
+                const div = document.createElement('div');
+                div.innerHTML = `<h3>${size}x${size} Icon</h3>`;
+                div.appendChild(canvas);
+                container.appendChild(div);
+                
+                // Download the icon
+                const link = document.createElement('a');
+                link.download = `icon-${size}x${size}.png`;
+                link.href = canvas.toDataURL();
+                link.click();
+            };
+            img.src = 'icon.svg';
+        }
+        
+        function downloadAll() {
+            generateIcon(192);
+            setTimeout(() => generateIcon(512), 1000);
+        }
+    </script>
+</body>
+</html> 

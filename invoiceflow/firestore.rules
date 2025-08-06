@@ -1,0 +1,237 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ========================================
+    // HELPER FUNCTIONS
+    // ========================================
+    
+    // Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Check if user exists and is active
+    function isUserActive() {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true;
+    }
+    
+    // Get user's role
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    
+    // Check if user is admin
+    function isAdmin() {
+      return isUserActive() && getUserRole() == 'admin';
+    }
+    
+    // Check if user is manager
+    function isManager() {
+      return isUserActive() && getUserRole() == 'manager';
+    }
+    
+
+    
+    // Get user's company ID
+    function getUserCompanyId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.companyId;
+    }
+    
+    // Check if user belongs to the same company as the resource
+    function isSameCompany(resourceData) {
+      return getUserCompanyId() == resourceData.companyId;
+    }
+    
+    // Check if user belongs to the same company as the request data
+    function isSameCompanyRequest(requestData) {
+      return getUserCompanyId() == requestData.companyId;
+    }
+    
+    // Validate required fields for user creation
+    function validateUserCreate(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'companyId', 'isActive', 'createdAt', 'updatedAt']) &&
+        data.uid is string &&
+        data.email is string &&
+        data.displayName is string &&
+        data.role in ['admin', 'seller'] &&
+        data.companyId is string &&
+        data.isActive is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+    
+    // Validate required fields for company creation
+    function validateCompanyCreate(data) {
+      return data.keys().hasAll(['name', 'primaryColor', 'secondaryColor', 'address', 'phone', 'email', 'createdAt', 'updatedAt']) &&
+        data.name is string &&
+        data.primaryColor is string &&
+        data.secondaryColor is string &&
+        data.address is string &&
+        data.phone is string &&
+        data.email is string &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+    
+    // Validate required fields for client creation
+    function validateClientCreate(data) {
+      return data.keys().hasAll(['companyId', 'name', 'email', 'phone', 'address', 'createdAt', 'updatedAt']) &&
+        data.companyId is string &&
+        data.name is string &&
+        data.email is string &&
+        data.phone is string &&
+        data.address is string &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+    
+    // Validate required fields for invoice creation
+    function validateInvoiceCreate(data) {
+      return data.keys().hasAll(['companyId', 'clientId', 'invoiceNumber', 'title', 'items', 'subtotal', 'tax', 'total', 'status', 'issueDate', 'dueDate', 'createdAt', 'updatedAt']) &&
+        data.companyId is string &&
+        data.clientId is string &&
+        data.invoiceNumber is string &&
+        data.title is string &&
+        data.items is list &&
+        data.subtotal is number &&
+        data.tax is number &&
+        data.total is number &&
+        data.status in ['draft', 'sent', 'paid', 'overdue'] &&
+        data.issueDate is timestamp &&
+        data.dueDate is timestamp &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+    
+    // Validate required fields for receipt creation
+    function validateReceiptCreate(data) {
+      return data.keys().hasAll(['companyId', 'invoiceId', 'amount', 'method', 'date', 'createdAt', 'updatedAt']) &&
+        data.companyId is string &&
+        data.invoiceId is string &&
+        data.amount is number &&
+        data.method in ['cash', 'card', 'transfer', 'other'] &&
+        data.date is timestamp &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+    
+    // Validate required fields for quotation creation
+    function validateQuotationCreate(data) {
+      return data.keys().hasAll(['companyId', 'clientId', 'clientName', 'items', 'subtotal', 'tax', 'total', 'status', 'date', 'expiryDate', 'createdBy']) &&
+        data.companyId is string &&
+        data.clientId is string &&
+        data.clientName is string &&
+        data.items is list &&
+        data.subtotal is number &&
+        data.tax is number &&
+        data.total is number &&
+        data.status in ['Draft', 'Sent', 'Accepted', 'Declined', 'Expired'] &&
+        data.date is string &&
+        data.expiryDate is string &&
+        data.createdBy is string;
+    }
+    
+    // ========================================
+    // ADMINS COLLECTION
+    // ========================================
+    match /admins/{adminId} {
+      // Allow read for email validation during registration
+      allow read: if true; // Allow public read for registration
+      
+      // Only managers can manage the admins collection
+      allow write: if isManager();
+    }
+    
+    // ========================================
+    // USERS COLLECTION
+    // ========================================
+    match /users/{userId} {
+      // Users can read and write their own document
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+      
+      // Admins and sellers can read users in their company
+      allow read: if isUserActive() && 
+        isSameCompany(resource.data);
+      
+      // Admins can create users in their company with validation
+      allow create: if isAdmin() && 
+        isSameCompanyRequest(request.resource.data) &&
+        validateUserCreate(request.resource.data);
+      
+      // Admins can update user status in their company
+      allow update: if isAdmin() && 
+        isSameCompany(resource.data) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isActive', 'temporaryPassword', 'updatedAt']);
+    }
+    
+    // ========================================
+    // COMPANIES COLLECTION
+    // ========================================
+    match /companies/{companyId} {
+      allow create: if true; // Allow public create for registration
+      allow read, write: if isUserActive() && getUserCompanyId() == companyId;
+    }
+    
+    // ========================================
+    // CLIENTS COLLECTION
+    // ========================================
+    match /clients/{clientId} {
+      // Company members can read and write clients in their company
+      allow read, write: if isUserActive() && 
+        isSameCompany(resource.data);
+      
+      // Company members can create clients in their company with validation
+      allow create: if isUserActive() && 
+        isSameCompanyRequest(request.resource.data) &&
+        validateClientCreate(request.resource.data);
+    }
+    
+    // ========================================
+    // INVOICES COLLECTION
+    // ========================================
+    match /invoices/{invoiceId} {
+      // Company members can read and write invoices in their company
+      allow read, write: if isUserActive() && 
+        isSameCompany(resource.data);
+      
+      // Company members can create invoices in their company with validation
+      allow create: if isUserActive() && 
+        isSameCompanyRequest(request.resource.data) &&
+        validateInvoiceCreate(request.resource.data);
+    }
+    
+    // ========================================
+    // RECEIPTS COLLECTION (ADMIN & SELLER ACCESS)
+    // ========================================
+    match /receipts/{receiptId} {
+      // Admins and sellers can read receipts in their company
+      allow read: if isUserActive() && 
+        isSameCompany(resource.data);
+      
+      // Only admins can write receipts in their company
+      allow write: if isAdmin() && 
+        isSameCompany(resource.data);
+      
+      // Only admins can create receipts in their company with validation
+      allow create: if isAdmin() && 
+        isSameCompanyRequest(request.resource.data) &&
+        validateReceiptCreate(request.resource.data);
+    }
+    
+    // ========================================
+    // QUOTATIONS COLLECTION
+    // ========================================
+    match /quotations/{quotationId} {
+      // Company members can read and write quotations in their company
+      allow read, write: if isUserActive() && 
+        isSameCompany(resource.data);
+      
+      // Company members can create quotations in their company with validation
+      allow create: if isUserActive() && 
+        isSameCompanyRequest(request.resource.data) &&
+        validateQuotationCreate(request.resource.data);
+    }
+  }
+}

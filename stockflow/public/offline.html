@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Offline - Project Sales</title>
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" href="/icon-192x192.png" />
+    <style>
+      body { margin: 0; font-family: sans-serif; background: #f9fafb; color: #222; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+      .offline-container { text-align: center; }
+      .offline-icon { font-size: 64px; color: #94a3b8; margin-bottom: 24px; }
+      .offline-title { font-size: 2rem; font-weight: bold; margin-bottom: 8px; }
+      .offline-desc { color: #64748b; margin-bottom: 24px; }
+      .offline-btn { background: #2563eb; color: #fff; border: none; border-radius: 8px; padding: 12px 32px; font-size: 1rem; cursor: pointer; }
+      .offline-btn:hover { background: #1d4ed8; }
+    </style>
+  </head>
+  <body>
+    <div class="offline-container">
+      <div class="offline-icon">&#9888;</div>
+      <div class="offline-title">You are offline</div>
+      <div class="offline-desc">This page isn’t available offline. Please check your connection.</div>
+      <button class="offline-btn" onclick="window.location.reload()">Retry</button>
+    </div>
+  </body>
+</html> 
