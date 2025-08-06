@@ -1,18 +1,20 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
-import { auth, db } from '@/config/firebase';
+import { auth, db } from '../shared/config/firebase';
 import { RealTimeService } from '@/services/realTimeService';
-import { User } from '@/types';
+import { User } from '../shared/types';
+import { AuthService } from '../shared/services/authService';
 
 interface AuthContextType {
   user: FirebaseUser | null;
   userProfile: User | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, role: 'client' | 'merchant', firstName: string, lastName: string, businessName?: string) => Promise<void>;
+  signUp: (email: string, password: string, role: 'admin' | 'general_user', profile: User['profile']) => Promise<void>;
   logout: () => Promise<void>;
   updateWalletBalance: (newBalance: number) => Promise<void>;
+  hasAppPermission: (app: 'payflow' | 'invoiceflow' | 'stockflow') => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -23,80 +25,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setUser(firebaseUser);
-      
-      if (firebaseUser) {
-        // Subscribe to real-time user profile updates
-        const unsubscribeProfile = RealTimeService.subscribeToUserProfile(
-          firebaseUser.uid,
-          (profile) => {
-            setUserProfile(profile);
-            setLoading(false);
-          }
-        );
-
-        return unsubscribeProfile;
+    const unsubscribe = AuthService.onAuthStateChanged((user) => {
+      if (user) {
+        setUser({ uid: user.id, email: user.email } as FirebaseUser);
+        setUserProfile(user);
       } else {
+        setUser(null);
         setUserProfile(null);
-        setLoading(false);
       }
+      setLoading(false);
     });
 
     return unsubscribe;
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-    } catch (error: any) {
-      throw new Error(error.message || 'Login failed');
+    const result = await AuthService.signIn(email, password);
+    if (!result.success) {
+      throw new Error(result.error || 'Login failed');
     }
   };
 
   const signUp = async (
-    email: string, 
-    password: string, 
-    role: 'client' | 'merchant', 
-    firstName: string, 
-    lastName: string,
-    businessName?: string
+    email: string,
+    password: string,
+    role: 'admin' | 'general_user',
+    profile: User['profile']
   ) => {
-    try {
-      const { user: firebaseUser } = await createUserWithEmailAndPassword(auth, email, password);
-      
-      // Create user profile in Firestore
-      const userData: Omit<User, 'id'> = {
-        email,
-        role,
-        firstName,
-        lastName,
-        businessName: role === 'merchant' ? businessName : undefined,
-        walletBalance: role === 'client' ? 100 : 0, // Give clients SZL 100 to start
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      await setDoc(doc(db, 'users', firebaseUser.uid), userData);
-    } catch (error: any) {
-      throw new Error(error.message || 'Signup failed');
+    const result = await AuthService.register(email, password, profile, role, {
+      payflow: true, // Everyone gets PayFlow access
+      invoiceflow: role === 'admin',
+      stockflow: role === 'admin'
+    });
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Signup failed');
     }
   };
 
   const logout = async () => {
-    try {
-      await signOut(auth);
-    } catch (error) {
-      console.error('Logout error:', error);
-    }
+    await AuthService.signOut();
   };
 
   const updateWalletBalance = async (newBalance: number) => {
     if (user && userProfile) {
       try {
-        await updateDoc(doc(db, 'users', user.uid), {
-          walletBalance: newBalance,
-          updatedAt: new Date(),
+        await AuthService.updateProfile(user.uid, {
+          walletBalance: newBalance
         });
         
         // The real-time listener will update the userProfile automatically
@@ -106,6 +81,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const hasAppPermission = (app: 'payflow' | 'invoiceflow' | 'stockflow'): boolean => {
+    return userProfile?.permissions[app] || false;
+  };
   return (
     <AuthContext.Provider value={{
       user,
@@ -115,6 +93,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       signUp,
       logout,
       updateWalletBalance,
+      hasAppPermission,
     }}>
       {children}
     </AuthContext.Provider>

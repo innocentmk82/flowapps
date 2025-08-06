@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, Alert, ScrollView, Modal } from 'react-native';
 import { useAuth } from '@/contexts/AuthContext';
-import { PaymentService } from '@/services/paymentService';
+import { IntegrationService } from '@/services/integrationService';
 import { Wallet as WalletIcon, Plus, Send, FileText, Package, X, CreditCard, QrCode, Smartphone, Building2, Clock } from 'lucide-react-native';
 
 export default function WalletScreen() {
@@ -38,7 +38,7 @@ export default function WalletScreen() {
 
     setLoading(true);
     try {
-      const result = await PaymentService.topUpWallet(userProfile!.id, amount);
+      const result = await IntegrationService.topUpWallet(userProfile!.id, amount, 'momo');
       if (result.success) {
         await updateWalletBalance(userProfile!.walletBalance + amount);
         setTopUpAmount('');
@@ -137,21 +137,11 @@ export default function WalletScreen() {
 
     setLoading(true);
     try {
-      // Find receiver by email
-      const receiverResult = await PaymentService.findUserByEmail(receiverEmail);
-      if (!receiverResult.success) {
-        Alert.alert('Error', 'Recipient not found');
-        setLoading(false);
-        return;
-      }
-
-      const result = await PaymentService.processPayment(
+      const result = await IntegrationService.transferMoney(
         userProfile!.id,
-        receiverResult.userId!,
+        receiverEmail,
         amount,
-        'payment',
-        `Payment to ${receiverEmail}`,
-        { receiverEmail }
+        `Payment to ${receiverEmail}`
       );
 
       if (result.success) {
@@ -184,18 +174,7 @@ export default function WalletScreen() {
 
     setLoading(true);
     try {
-      // For demo, we'll create a mock merchant ID
-      // In production, you'd look up the invoice to find the merchant
-      const mockMerchantId = 'demo-merchant-' + invoiceId.slice(-4);
-      
-      const result = await PaymentService.processPayment(
-        userProfile!.id,
-        mockMerchantId,
-        amount,
-        'invoice',
-        `Invoice Payment - ${invoiceId}`,
-        { invoiceId }
-      );
+      const result = await IntegrationService.processInvoicePayment(invoiceId, userProfile!.email);
 
       if (result.success) {
         await updateWalletBalance(userProfile!.walletBalance - amount);
@@ -227,17 +206,25 @@ export default function WalletScreen() {
 
     setLoading(true);
     try {
-      // For demo, we'll create a mock merchant ID based on product code
-      const mockMerchantId = 'demo-merchant-' + productCode.slice(-4);
+      // Create order and process payment
+      const orderId = await StockFlowSDK.createOrder({
+        companyId: 'demo-company', // In production, lookup by product code
+        customerId: userProfile!.id,
+        customerEmail: userProfile!.email,
+        items: [{
+          productId: productCode,
+          productName: `Product ${productCode}`,
+          quantity: 1,
+          price: amount,
+          total: amount
+        }],
+        subtotal: amount,
+        tax: 0,
+        total: amount,
+        status: 'pending'
+      });
       
-      const result = await PaymentService.processPayment(
-        userProfile!.id,
-        mockMerchantId,
-        amount,
-        'product',
-        `Product Purchase - ${productCode}`,
-        { productCode }
-      );
+      const result = await IntegrationService.processOrderPayment(orderId, userProfile!.email);
 
       if (result.success) {
         await updateWalletBalance(userProfile!.walletBalance - amount);

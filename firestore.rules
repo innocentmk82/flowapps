@@ -1,19 +1,176 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && getUserData().role == 'admin';
+    }
+    
+    function isGeneralUser() {
+      return isAuthenticated() && getUserData().role == 'general_user';
+    }
+    
+    function isActiveUser() {
+      return isAuthenticated() && getUserData().isActive == true;
+    }
+    
+    function hasAppPermission(app) {
+      return getUserData().permissions[app] == true;
+    }
+    
+    function isCompanyOwner(companyId) {
+      return get(/databases/$(database)/documents/companies/$(companyId)).data.ownerId == request.auth.uid;
+    }
+    
+    function isSameUser(userId) {
+      return request.auth.uid == userId;
+    }
 
-    // This rule allows anyone with your Firestore database reference to view, edit,
-    // and delete all data in your Firestore database. It is useful for getting
-    // started, but it is configured to expire after 30 days because it
-    // leaves your app open to attackers. At that time, all client
-    // requests to your Firestore database will be denied.
-    //
-    // Make sure to write security rules for your app before that time, or else
-    // all client requests to your Firestore database will be denied until you Update
-    // your rules
-    match /{document=**} {
-      allow read, write: if request.time < timestamp.date(2025, 8, 21);
+    // Users collection
+    match /users/{userId} {
+      // Users can read/write their own profile
+      allow read, write: if isAuthenticated() && isSameUser(userId);
+      
+      // Admins can read all users (for customer lookup)
+      allow read: if isAuthenticated() && isAdmin();
+      
+      // Allow user creation during registration
+      allow create: if isAuthenticated() && isSameUser(userId);
+    }
+
+    // Companies collection
+    match /companies/{companyId} {
+      // Company owners can read/write their company
+      allow read, write: if isActiveUser() && isCompanyOwner(companyId);
+      
+      // Users with app permissions can read company data (for payments)
+      allow read: if isActiveUser() && (
+        hasAppPermission('payflow') || 
+        hasAppPermission('invoiceflow') || 
+        hasAppPermission('stockflow')
+      );
+      
+      // Allow company creation by admin users
+      allow create: if isAuthenticated() && isAdmin();
+    }
+
+    // Transactions collection
+    match /transactions/{transactionId} {
+      // Users can read transactions they're involved in
+      allow read: if isActiveUser() && (
+        request.auth.uid == resource.data.payerId || 
+        request.auth.uid == resource.data.receiverId ||
+        (resource.data.companyId != null && isCompanyOwner(resource.data.companyId))
+      );
+      
+      // Users can create transactions as payer
+      allow create: if isActiveUser() && 
+        request.auth.uid == request.resource.data.payerId;
+      
+      // System can update transaction status (via Cloud Functions)
+      allow update: if isActiveUser() && (
+        request.auth.uid == resource.data.payerId ||
+        request.auth.uid == resource.data.receiverId
+      );
+    }
+
+    // Invoices collection (InvoiceFlow)
+    match /invoices/{invoiceId} {
+      // Company owners can read/write their invoices
+      allow read, write: if isActiveUser() && 
+        hasAppPermission('invoiceflow') && 
+        isCompanyOwner(resource.data.companyId);
+      
+      // General users can read invoices addressed to them (for payment)
+      allow read: if isActiveUser() && 
+        hasAppPermission('payflow') && 
+        request.auth.token.email == resource.data.clientEmail;
+      
+      // Allow invoice creation by company owners
+      allow create: if isActiveUser() && 
+        hasAppPermission('invoiceflow') && 
+        isCompanyOwner(request.resource.data.companyId);
+      
+      // Allow status updates for payments
+      allow update: if isActiveUser() && (
+        isCompanyOwner(resource.data.companyId) ||
+        (request.auth.token.email == resource.data.clientEmail && 
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'paidAt', 'paymentTransactionId', 'updatedAt']))
+      );
+    }
+
+    // Products collection (StockFlow)
+    match /products/{productId} {
+      // Company owners can read/write their products
+      allow read, write: if isActiveUser() && 
+        hasAppPermission('stockflow') && 
+        isCompanyOwner(resource.data.companyId);
+      
+      // General users can read active products (for purchasing)
+      allow read: if isActiveUser() && 
+        hasAppPermission('payflow') && 
+        resource.data.isActive == true;
+      
+      // Allow product creation by company owners
+      allow create: if isActiveUser() && 
+        hasAppPermission('stockflow') && 
+        isCompanyOwner(request.resource.data.companyId);
+    }
+
+    // Orders collection (StockFlow)
+    match /orders/{orderId} {
+      // Company owners can read/write orders for their company
+      allow read, write: if isActiveUser() && 
+        isCompanyOwner(resource.data.companyId);
+      
+      // Customers can read/create their own orders
+      allow read, create: if isActiveUser() && 
+        hasAppPermission('payflow') && 
+        request.auth.uid == resource.data.customerId;
+      
+      // Allow order creation by customers
+      allow create: if isActiveUser() && 
+        hasAppPermission('payflow') && 
+        request.auth.uid == request.resource.data.customerId;
+      
+      // Allow status updates for payments
+      allow update: if isActiveUser() && (
+        isCompanyOwner(resource.data.companyId) ||
+        (request.auth.uid == resource.data.customerId && 
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'paymentTransactionId', 'updatedAt']))
+      );
+    }
+
+    // Notifications collection
+    match /notifications/{notificationId} {
+      // Users can read/update their own notifications
+      allow read, update: if isActiveUser() && 
+        request.auth.uid == resource.data.userId;
+      
+      // System can create notifications (via Cloud Functions)
+      allow create: if isAuthenticated();
+    }
+
+    // Payment references collection (for manual deposits)
+    match /payment_references/{referenceId} {
+      // Users can read their own payment references
+      allow read: if isActiveUser() && 
+        request.auth.uid == resource.data.userId;
+      
+      // Users can create payment references
+      allow create: if isActiveUser() && 
+        request.auth.uid == request.resource.data.userId;
+      
+      // Admins can update payment references (for verification)
+      allow update: if isActiveUser() && isAdmin();
     }
   }
 }
